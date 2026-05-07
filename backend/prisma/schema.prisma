@@ -1,0 +1,175 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  DOCTOR
+  PATIENT
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  realName  String?
+  phone     String?
+  email     String?
+  avatar    String?
+  role      UserRole @default(PATIENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor    Doctor?
+  patient   Patient?
+
+  @@map("users")
+}
+
+model Department {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  icon        String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  doctors     Doctor[]
+
+  @@map("departments")
+}
+
+model Doctor {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @unique
+  departmentId    Int
+  title           String
+  specialty       String
+  introduction    String?
+  avatar          String?
+  rating          Float    @default(5.0)
+  reviewCount     Int      @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department      Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  schedules       Schedule[]
+  appointments    Appointment[]
+  medicalRecords  MedicalRecord[]
+  reviews         Review[]
+
+  @@map("doctors")
+}
+
+model Patient {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @unique
+  age             Int?
+  gender          String?
+  idCard          String?  @unique
+  address         String?
+  emergencyContact String?
+  emergencyPhone  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments    Appointment[]
+  medicalRecords  MedicalRecord[]
+  reviews         Review[]
+
+  @@map("patients")
+}
+
+model Schedule {
+  id            Int      @id @default(autoincrement())
+  doctorId      Int
+  weekDay       Int
+  startTime     String
+  endTime       String
+  maxAppointments Int   @default(5)
+  weekStartDate DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  doctor        Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  appointments  Appointment[]
+
+  @@unique([doctorId, weekDay, weekStartDate])
+  @@map("schedules")
+}
+
+model Appointment {
+  id              Int               @id @default(autoincrement())
+  patientId       Int
+  doctorId        Int
+  scheduleId      Int?
+  appointmentDate DateTime
+  startTime       String
+  endTime         String
+  symptoms        String?
+  status          AppointmentStatus @default(PENDING)
+  rejectReason    String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  patient         Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor          Doctor            @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  schedule        Schedule?         @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  medicalRecord   MedicalRecord?
+  review          Review?
+
+  @@map("appointments")
+}
+
+model MedicalRecord {
+  id              Int      @id @default(autoincrement())
+  appointmentId   Int      @unique
+  patientId       Int
+  doctorId        Int
+  chiefComplaint  String?
+  diagnosis       String?
+  prescription    String?
+  advice          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  appointment     Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  patient         Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor          Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@map("medical_records")
+}
+
+model Review {
+  id              Int      @id @default(autoincrement())
+  appointmentId   Int      @unique
+  patientId       Int
+  doctorId        Int
+  rating          Int
+  content         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  appointment     Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  patient         Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor          Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
+}

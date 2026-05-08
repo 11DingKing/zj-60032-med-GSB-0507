@@ -111,7 +111,7 @@ model Schedule {
   doctor        Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   appointments  Appointment[]
 
-  @@unique([doctorId, weekDay, weekStartDate])
+  @@unique([doctorId, weekDay, startTime, weekStartDate])
   @@map("schedules")
 }
 

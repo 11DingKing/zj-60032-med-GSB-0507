@@ -1,6 +1,6 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import Redis from "ioredis";
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
@@ -9,7 +9,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private configService: ConfigService) {}
 
   onModuleInit() {
-    const redisUrl = this.configService.get<string>('REDIS_URL');
+    const redisUrl = this.configService.get<string>("REDIS_URL");
     this.client = new Redis(redisUrl);
   }
 
@@ -23,7 +23,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   async set(key: string, value: string, ttl?: number): Promise<void> {
     if (ttl) {
-      await this.client.set(key, value, 'EX', ttl);
+      await this.client.set(key, value, "EX", ttl);
     } else {
       await this.client.set(key, value);
     }
@@ -58,5 +58,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (keys.length > 0) {
       await this.client.del(...keys);
     }
+  }
+
+  async acquireLock(key: string, ttl: number = 10): Promise<boolean> {
+    const result = await this.client.set(key, "locked", "EX", ttl, "NX");
+    return result === "OK";
+  }
+
+  async releaseLock(key: string): Promise<void> {
+    await this.client.del(key);
   }
 }

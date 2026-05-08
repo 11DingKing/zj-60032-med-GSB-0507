@@ -1,7 +1,15 @@
 <template>
   <div class="appointment-detail-container">
-    <div v-if="loading" class="loading-center">
-      <i class="el-icon-loading" style="font-size: 48px"></i>
+    <div v-if="loading" class="loading-wrapper">
+      <div class="loading-center">
+        <div class="loading-spinner">
+          <i
+            class="el-icon-loading"
+            style="font-size: 48px; color: #409eff"
+          ></i>
+        </div>
+        <div class="loading-text">加载中...</div>
+      </div>
     </div>
 
     <template v-else-if="appointment">
@@ -650,8 +658,36 @@ onMounted(() => {
 
 .loading-center {
   display: flex;
+  flex-direction: column;
   justify-content: center;
-  padding: 60px 0;
+  align-items: center;
+  padding: 80px 0;
+  gap: 20px;
+}
+
+.loading-wrapper {
+  min-height: 400px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.loading-spinner {
+  animation: spin 1s linear infinite;
+}
+
+.loading-text {
+  color: #909399;
+  font-size: 14px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .error-container {

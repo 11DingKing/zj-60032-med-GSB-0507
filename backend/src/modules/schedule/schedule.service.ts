@@ -163,22 +163,21 @@ export class ScheduleService {
       },
     });
 
+    const nextWeekEnd = new Date(nextWeekStart);
+    nextWeekEnd.setDate(nextWeekStart.getDate() + 7);
+
+    await this.prisma.schedule.deleteMany({
+      where: {
+        doctorId: copyScheduleDto.doctorId,
+        weekDay: { in: copyScheduleDto.sourceWeekDays },
+        weekStartDate: nextWeekStart,
+      },
+    });
+
     const createdSchedules = [];
     for (const schedule of sourceSchedules) {
-      const nextWeekSchedule = await this.prisma.schedule.upsert({
-        where: {
-          doctorId_weekDay_startTime_weekStartDate: {
-            doctorId: schedule.doctorId,
-            weekDay: schedule.weekDay,
-            startTime: schedule.startTime,
-            weekStartDate: nextWeekStart,
-          },
-        },
-        update: {
-          endTime: schedule.endTime,
-          maxAppointments: schedule.maxAppointments,
-        },
-        create: {
+      const nextWeekSchedule = await this.prisma.schedule.create({
+        data: {
           doctorId: schedule.doctorId,
           weekDay: schedule.weekDay,
           startTime: schedule.startTime,

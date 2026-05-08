@@ -1,13 +1,17 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
-import { PrismaService } from '../../common/prisma/prisma.service';
-import { RedisService } from '../../common/redis/redis.service';
-import { CreateScheduleDto } from './dto/create-schedule.dto';
-import { CopyScheduleDto } from './dto/copy-schedule.dto';
-import { AppointmentStatus } from '@prisma/client';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from "@nestjs/common";
+import { PrismaService } from "../../common/prisma/prisma.service";
+import { RedisService } from "../../common/redis/redis.service";
+import { CreateScheduleDto } from "./dto/create-schedule.dto";
+import { CopyScheduleDto } from "./dto/copy-schedule.dto";
+import { AppointmentStatus } from "@prisma/client";
 
 @Injectable()
 export class ScheduleService {
-  private readonly SCHEDULE_CACHE_PREFIX = 'schedule:doctor';
+  private readonly SCHEDULE_CACHE_PREFIX = "schedule:doctor";
   private readonly CACHE_TTL = 600;
 
   constructor(
@@ -25,7 +29,7 @@ export class ScheduleService {
     });
 
     if (!doctor) {
-      throw new NotFoundException('医生不存在');
+      throw new NotFoundException("医生不存在");
     }
 
     const existing = await this.prisma.schedule.findFirst({
@@ -38,7 +42,7 @@ export class ScheduleService {
     });
 
     if (existing) {
-      throw new ConflictException('该时段已有排班');
+      throw new ConflictException("该时段已有排班");
     }
 
     const schedule = await this.prisma.schedule.create({
@@ -64,10 +68,7 @@ export class ScheduleService {
 
     const schedules = await this.prisma.schedule.findMany({
       where: { doctorId, weekStartDate: null },
-      orderBy: [
-        { weekDay: 'asc' },
-        { startTime: 'asc' },
-      ],
+      orderBy: [{ weekDay: "asc" }, { startTime: "asc" }],
     });
 
     await this.redisService.setJson(cacheKey, schedules, this.CACHE_TTL);
@@ -79,37 +80,61 @@ export class ScheduleService {
     const weekDay = targetDate.getDay();
     const adjustedWeekDay = weekDay === 0 ? 7 : weekDay;
 
-    const schedules = await this.prisma.schedule.findMany({
+    const dayOfWeek = targetDate.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const weekStartDate = new Date(targetDate);
+    weekStartDate.setDate(targetDate.getDate() + mondayOffset);
+    weekStartDate.setHours(0, 0, 0, 0);
+
+    let schedules = await this.prisma.schedule.findMany({
       where: {
         doctorId,
         weekDay: adjustedWeekDay,
-        weekStartDate: null,
+        weekStartDate,
       },
-      orderBy: { startTime: 'asc' },
+      orderBy: { startTime: "asc" },
     });
+
+    if (schedules.length === 0) {
+      schedules = await this.prisma.schedule.findMany({
+        where: {
+          doctorId,
+          weekDay: adjustedWeekDay,
+          weekStartDate: null,
+        },
+        orderBy: { startTime: "asc" },
+      });
+    }
 
     const appointments = await this.prisma.appointment.findMany({
       where: {
         doctorId,
         appointmentDate: {
-          gte: new Date(date + 'T00:00:00'),
-          lte: new Date(date + 'T23:59:59'),
+          gte: new Date(date + "T00:00:00"),
+          lte: new Date(date + "T23:59:59"),
         },
         status: {
-          in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.IN_PROGRESS],
+          in: [
+            AppointmentStatus.PENDING,
+            AppointmentStatus.CONFIRMED,
+            AppointmentStatus.IN_PROGRESS,
+          ],
         },
       },
     });
 
     const slotAppointmentCount: Record<string, number> = {};
     for (const appt of appointments) {
-      slotAppointmentCount[appt.startTime] = (slotAppointmentCount[appt.startTime] || 0) + 1;
+      slotAppointmentCount[appt.startTime] =
+        (slotAppointmentCount[appt.startTime] || 0) + 1;
     }
 
-    return schedules.map(schedule => ({
+    return schedules.map((schedule) => ({
       ...schedule,
       currentAppointments: slotAppointmentCount[schedule.startTime] || 0,
-      isAvailable: (slotAppointmentCount[schedule.startTime] || 0) < schedule.maxAppointments,
+      isAvailable:
+        (slotAppointmentCount[schedule.startTime] || 0) <
+        schedule.maxAppointments,
     }));
   }
 
@@ -119,23 +144,33 @@ export class ScheduleService {
     });
 
     if (!doctor) {
-      throw new NotFoundException('医生不存在');
+      throw new NotFoundException("医生不存在");
     }
 
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const currentDay = today.getDay();
-    const daysUntilMonday = currentDay === 0 ? 1 : 1 - currentDay;
-    const thisWeekStart = new Date(today);
-    thisWeekStart.setDate(today.getDate() + daysUntilMonday);
-    
-    const nextWeekStart = new Date(thisWeekStart);
-    nextWeekStart.setDate(thisWeekStart.getDate() + 7);
+
+    const daysToAddForNextMonday = currentDay === 0 ? 1 : 8 - currentDay;
+    const nextWeekStart = new Date(today);
+    nextWeekStart.setDate(today.getDate() + daysToAddForNextMonday);
 
     const sourceSchedules = await this.prisma.schedule.findMany({
       where: {
         doctorId: copyScheduleDto.doctorId,
         weekDay: { in: copyScheduleDto.sourceWeekDays },
         weekStartDate: null,
+      },
+    });
+
+    const nextWeekEnd = new Date(nextWeekStart);
+    nextWeekEnd.setDate(nextWeekStart.getDate() + 7);
+
+    await this.prisma.schedule.deleteMany({
+      where: {
+        doctorId: copyScheduleDto.doctorId,
+        weekDay: { in: copyScheduleDto.sourceWeekDays },
+        weekStartDate: nextWeekStart,
       },
     });
 
@@ -156,7 +191,7 @@ export class ScheduleService {
 
     await this.redisService.del(this.getCacheKey(copyScheduleDto.doctorId));
     return {
-      message: `成功复制 ${createdSchedules.length} 条排挡到下一周`,
+      message: `成功复制 ${createdSchedules.length} 条排班到下一周`,
       schedules: createdSchedules,
     };
   }
@@ -167,13 +202,13 @@ export class ScheduleService {
     });
 
     if (!schedule) {
-      throw new NotFoundException('排班不存在');
+      throw new NotFoundException("排班不存在");
     }
 
     await this.prisma.schedule.delete({ where: { id } });
     await this.redisService.del(this.getCacheKey(schedule.doctorId));
 
-    return { message: '删除成功' };
+    return { message: "删除成功" };
   }
 
   async batchCreate(doctorId: number, schedules: CreateScheduleDto[]) {
@@ -182,7 +217,7 @@ export class ScheduleService {
     });
 
     if (!doctor) {
-      throw new NotFoundException('医生不存在');
+      throw new NotFoundException("医生不存在");
     }
 
     await this.prisma.schedule.deleteMany({

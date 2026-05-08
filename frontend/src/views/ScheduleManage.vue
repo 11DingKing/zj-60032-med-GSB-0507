@@ -321,7 +321,8 @@ const copyToNextWeek = async () => {
   }
   copying.value = true
   try {
-    await scheduleApi.copyToNextWeek(doctorId.value, selectedDaysToCopy.value)
+    const sourceWeekDays = selectedDaysToCopy.value.map((dayIndex) => dayIndex + 1)
+    await scheduleApi.copyToNextWeek(doctorId.value, sourceWeekDays)
     ElMessage.success('已复制到下一周')
     showCopyDialog.value = false
     selectedDaysToCopy.value = []

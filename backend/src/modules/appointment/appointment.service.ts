@@ -1,9 +1,14 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../common/prisma/prisma.service';
-import { RedisService } from '../../common/redis/redis.service';
-import { CreateAppointmentDto } from './dto/create-appointment.dto';
-import { UpdateAppointmentStatusDto } from './dto/update-appointment-status.dto';
-import { AppointmentStatus, UserRole } from '@prisma/client';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from "@nestjs/common";
+import { PrismaService } from "../../common/prisma/prisma.service";
+import { RedisService } from "../../common/redis/redis.service";
+import { CreateAppointmentDto } from "./dto/create-appointment.dto";
+import { UpdateAppointmentStatusDto } from "./dto/update-appointment-status.dto";
+import { AppointmentStatus, UserRole } from "@prisma/client";
 
 @Injectable()
 export class AppointmentService {
@@ -16,7 +21,7 @@ export class AppointmentService {
     return {
       ...appointment,
       date: appointment.appointmentDate
-        ? appointment.appointmentDate.toISOString().split('T')[0]
+        ? appointment.appointmentDate.toISOString().split("T")[0]
         : null,
     };
   }
@@ -31,7 +36,7 @@ export class AppointmentService {
     });
 
     if (!patient) {
-      throw new ForbiddenException('只有患者可以预约');
+      throw new ForbiddenException("只有患者可以预约");
     }
 
     const doctor = await this.prisma.doctor.findUnique({
@@ -39,70 +44,93 @@ export class AppointmentService {
     });
 
     if (!doctor || !doctor.isActive) {
-      throw new NotFoundException('医生不存在或已停诊');
+      throw new NotFoundException("医生不存在或已停诊");
     }
 
     const targetDate = new Date(createAppointmentDto.appointmentDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     if (targetDate < today) {
-      throw new BadRequestException('不能预约过去的日期');
+      throw new BadRequestException("不能预约过去的日期");
     }
 
-    const existingAppointments = await this.prisma.appointment.findMany({
-      where: {
-        doctorId: createAppointmentDto.doctorId,
-        appointmentDate: {
-          gte: new Date(createAppointmentDto.appointmentDate + 'T00:00:00'),
-          lte: new Date(createAppointmentDto.appointmentDate + 'T23:59:59'),
-        },
-        startTime: createAppointmentDto.startTime,
-        status: {
-          in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.IN_PROGRESS],
-        },
-      },
-    });
+    const lockKey = `appointment:lock:${createAppointmentDto.doctorId}:${createAppointmentDto.appointmentDate}:${createAppointmentDto.startTime}`;
+    const lockValue = Date.now().toString();
+    const lockAcquired = await this.redisService
+      .getClient()
+      .set(lockKey, lockValue, "EX", 10, "NX");
 
-    const schedule = await this.prisma.schedule.findFirst({
-      where: {
-        doctorId: createAppointmentDto.doctorId,
-        startTime: createAppointmentDto.startTime,
-      },
-    });
-
-    const maxAppointments = schedule?.maxAppointments || 5;
-    if (existingAppointments.length >= maxAppointments) {
-      throw new BadRequestException('该时段预约已满');
+    if (!lockAcquired) {
+      throw new BadRequestException("该时段正在被预约中，请稍后重试");
     }
 
-    const appointment = await this.prisma.appointment.create({
-      data: {
-        patientId: patient.id,
-        doctorId: createAppointmentDto.doctorId,
-        scheduleId: createAppointmentDto.scheduleId,
-        appointmentDate: new Date(createAppointmentDto.appointmentDate),
-        startTime: createAppointmentDto.startTime,
-        endTime: createAppointmentDto.endTime,
-        symptoms: createAppointmentDto.symptoms,
-        status: AppointmentStatus.PENDING,
-      },
-      include: {
-        doctor: {
-          include: {
-            department: true,
-            user: { select: { realName: true, avatar: true } },
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        const existingAppointments = await tx.appointment.findMany({
+          where: {
+            doctorId: createAppointmentDto.doctorId,
+            appointmentDate: {
+              gte: new Date(createAppointmentDto.appointmentDate + "T00:00:00"),
+              lte: new Date(createAppointmentDto.appointmentDate + "T23:59:59"),
+            },
+            startTime: createAppointmentDto.startTime,
+            status: {
+              in: [
+                AppointmentStatus.PENDING,
+                AppointmentStatus.CONFIRMED,
+                AppointmentStatus.IN_PROGRESS,
+              ],
+            },
           },
-        },
-        patient: {
-          include: {
-            user: { select: { realName: true, avatar: true } },
-          },
-        },
-      },
-    });
+        });
 
-    return this.formatAppointment(appointment);
+        const schedule = await tx.schedule.findFirst({
+          where: {
+            doctorId: createAppointmentDto.doctorId,
+            startTime: createAppointmentDto.startTime,
+          },
+        });
+
+        const maxAppointments = schedule?.maxAppointments || 5;
+        if (existingAppointments.length >= maxAppointments) {
+          throw new BadRequestException("该时段预约已满");
+        }
+
+        return tx.appointment.create({
+          data: {
+            patientId: patient.id,
+            doctorId: createAppointmentDto.doctorId,
+            scheduleId: createAppointmentDto.scheduleId,
+            appointmentDate: new Date(createAppointmentDto.appointmentDate),
+            startTime: createAppointmentDto.startTime,
+            endTime: createAppointmentDto.endTime,
+            symptoms: createAppointmentDto.symptoms,
+            status: AppointmentStatus.PENDING,
+          },
+          include: {
+            doctor: {
+              include: {
+                department: true,
+                user: { select: { realName: true, avatar: true } },
+              },
+            },
+            patient: {
+              include: {
+                user: { select: { realName: true, avatar: true } },
+              },
+            },
+          },
+        });
+      });
+
+      return this.formatAppointment(result);
+    } finally {
+      const currentLockValue = await this.redisService.get(lockKey);
+      if (currentLockValue === lockValue) {
+        await this.redisService.del(lockKey);
+      }
+    }
   }
 
   async findByPatient(patientId: number) {
@@ -118,7 +146,7 @@ export class AppointmentService {
         medicalRecord: true,
         review: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
     return this.formatAppointments(appointments);
   }
@@ -139,10 +167,7 @@ export class AppointmentService {
         },
         medicalRecord: true,
       },
-      orderBy: [
-        { appointmentDate: 'asc' },
-        { startTime: 'asc' },
-      ],
+      orderBy: [{ appointmentDate: "asc" }, { startTime: "asc" }],
     });
     return this.formatAppointments(appointments);
   }
@@ -168,7 +193,7 @@ export class AppointmentService {
     });
 
     if (!appointment) {
-      throw new NotFoundException('预约不存在');
+      throw new NotFoundException("预约不存在");
     }
 
     return this.formatAppointment(appointment);
@@ -183,37 +208,48 @@ export class AppointmentService {
     const appointment = await this.findOne(id);
 
     if (userRole === UserRole.PATIENT) {
-      const patient = await this.prisma.patient.findUnique({ where: { userId } });
+      const patient = await this.prisma.patient.findUnique({
+        where: { userId },
+      });
       if (appointment.patientId !== patient?.id) {
-        throw new ForbiddenException('无权操作此预约');
+        throw new ForbiddenException("无权操作此预约");
       }
 
       if (updateAppointmentStatusDto.status !== AppointmentStatus.CANCELLED) {
-        throw new ForbiddenException('患者只能取消预约');
+        throw new ForbiddenException("患者只能取消预约");
       }
 
       const appointmentDate = new Date(appointment.appointmentDate);
       const now = new Date();
       if (appointmentDate <= now) {
-        throw new BadRequestException('就诊时间已过，无法取消');
+        throw new BadRequestException("就诊时间已过，无法取消");
       }
     }
 
     if (userRole === UserRole.DOCTOR) {
       const doctor = await this.prisma.doctor.findUnique({ where: { userId } });
       if (appointment.doctorId !== doctor?.id) {
-        throw new ForbiddenException('无权操作此预约');
+        throw new ForbiddenException("无权操作此预约");
       }
 
       const validTransitions = {
-        [AppointmentStatus.PENDING]: [AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED],
-        [AppointmentStatus.CONFIRMED]: [AppointmentStatus.IN_PROGRESS, AppointmentStatus.CANCELLED],
-        [AppointmentStatus.IN_PROGRESS]: [AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED],
+        [AppointmentStatus.PENDING]: [
+          AppointmentStatus.CONFIRMED,
+          AppointmentStatus.CANCELLED,
+        ],
+        [AppointmentStatus.CONFIRMED]: [
+          AppointmentStatus.IN_PROGRESS,
+          AppointmentStatus.CANCELLED,
+        ],
+        [AppointmentStatus.IN_PROGRESS]: [
+          AppointmentStatus.COMPLETED,
+          AppointmentStatus.CANCELLED,
+        ],
       };
 
       const validStatuses = validTransitions[appointment.status] || [];
       if (!validStatuses.includes(updateAppointmentStatusDto.status)) {
-        throw new BadRequestException('无效的状态变更');
+        throw new BadRequestException("无效的状态变更");
       }
     }
 
@@ -267,7 +303,7 @@ export class AppointmentService {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
     return this.formatAppointments(appointments);
   }

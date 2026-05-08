@@ -80,14 +80,31 @@ export class ScheduleService {
     const weekDay = targetDate.getDay();
     const adjustedWeekDay = weekDay === 0 ? 7 : weekDay;
 
-    const schedules = await this.prisma.schedule.findMany({
+    const dayOfWeek = targetDate.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const weekStartDate = new Date(targetDate);
+    weekStartDate.setDate(targetDate.getDate() + mondayOffset);
+    weekStartDate.setHours(0, 0, 0, 0);
+
+    let schedules = await this.prisma.schedule.findMany({
       where: {
         doctorId,
         weekDay: adjustedWeekDay,
-        weekStartDate: null,
+        weekStartDate,
       },
       orderBy: { startTime: "asc" },
     });
+
+    if (schedules.length === 0) {
+      schedules = await this.prisma.schedule.findMany({
+        where: {
+          doctorId,
+          weekDay: adjustedWeekDay,
+          weekStartDate: null,
+        },
+        orderBy: { startTime: "asc" },
+      });
+    }
 
     const appointments = await this.prisma.appointment.findMany({
       where: {
